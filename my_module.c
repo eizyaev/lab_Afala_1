@@ -15,7 +15,7 @@
 
 #include "my_module.h"
 
-#define MY_DEVICE "MY_DEVICE"
+#define MY_DEVICE "my_device"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Anonymous");
@@ -80,13 +80,10 @@ void cleanup_module(void)
 int my_open(struct inode *inode, struct file *filp)
 {
 	int minor = MINOR(inode->i_rdev);
-	//MOD_INC_USE_COUNT;
+	MOD_INC_USE_COUNT;
 	mydev *devptr;
-	printk ("opening dev file with minor %d\n",minor);
 	for (devptr = devlist_ptr; devptr; devptr = devptr->next){
-		printk ("comparing to current minor: %d\n", devptr->id);
 		if (devptr->id == minor){ //buffer already exeists for device file
-			printk ("device exists with minot %d\n", devptr->id);
 			break;
 		}
 	}
@@ -94,17 +91,14 @@ int my_open(struct inode *inode, struct file *filp)
 	if (devptr == NULL) { //buffer does not exist for device file, create new
 		devptr = kmalloc(sizeof(mydev), GFP_KERNEL);
 		if (devptr == NULL) {
-			//MOD_DEC_USE_COUNT;
 			printk(KERN_WARNING "can't get dynamic memory\n");
 			return -ENOMEM;
 		}
-		printk ("new dev with minor %d\n",minor);
 		devptr->id = minor;
 		devptr->data = kmalloc(MY_BLOCK_SIZE, GFP_KERNEL);
 		if (devptr->data == NULL) {
 			kfree(devptr);
 			printk(KERN_WARNING "can't get dynamic memory\n");
-			//MOD_DEC_USE_COUNT;
 			return -ENOMEM;
 		}
 		memset(devptr->data, 0, MY_BLOCK_SIZE);
@@ -114,21 +108,6 @@ int my_open(struct inode *inode, struct file *filp)
 		devlist_ptr = devptr;
 	}
 	filp->private_data = devptr;
-	
-	if (filp->f_mode & FMODE_READ)
-    {
-	//
-	// handle read opening
-	//
-    }
-    
-    if (filp->f_mode & FMODE_WRITE)
-    {
-        //
-        // handle write opening
-        //
-    }
-
     return 0;
 
 }
@@ -136,21 +115,7 @@ int my_open(struct inode *inode, struct file *filp)
 
 int my_release(struct inode *inode, struct file *filp)
 {
-	//MOD_DEC_USE_COUNT;
-	if (filp->f_mode & FMODE_READ)
-    {
-	//
-	// handle read closing
-	// 
-    }
-    
-    if (filp->f_mode & FMODE_WRITE)
-    {
-        //
-        // handle write closing
-        //
-    }
-
+	MOD_DEC_USE_COUNT;
     return 0;
 }
 
@@ -160,7 +125,7 @@ ssize_t my_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 	mydev *devptr = filp->private_data;
 	size_t actual_count;
 	if (devptr->read_ptr + count > devptr->write_ptr) {
-		printk ("trying to read too much data\n");
+		printk ("Trying to read too much data, reading until write_ptr\n");
 		actual_count = devptr->write_ptr - devptr->read_ptr;
 	}
 	else{
@@ -177,7 +142,6 @@ ssize_t my_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 ssize_t my_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
 	mydev *devptr = filp->private_data;
-	printk ("devptr->write_ptr = %d\n", devptr->write_ptr);
 	if (devptr->write_ptr + count > MY_BLOCK_SIZE) {
 		printk(KERN_WARNING "not enough free memory in buffer\n");
 		return -ENOMEM;
@@ -186,7 +150,6 @@ ssize_t my_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos
 		return -EFAULT;
 	}
 	devptr->write_ptr += count;
-	printk ("devptr->write_ptr = %d\n", devptr->write_ptr);
 	return count;
 }
 
