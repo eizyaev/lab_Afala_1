@@ -34,14 +34,10 @@ struct file_operations my_fops = {
 typedef struct my_dev {
 	int id; //id of the device - minor number
 	void* data; //pointer to a 4KB data block. allocated once per device file.
-	struct my_dev* next; //pointer to the next device
-} mydev;
-
-typedef struct fileinfo {
-	void* data; //pointer to the 4KB data block of the device file
 	int read_ptr; //reading location within data block
 	int write_ptr; //writing location within data block
-} fileinfo;
+	struct my_dev* next; //pointer to the next device
+} mydev;
 
 mydev* devlist_ptr; //pointer to the head of the device list
 
@@ -83,61 +79,42 @@ void cleanup_module(void)
 
 int my_open(struct inode *inode, struct file *filp)
 {
-	printk ("printk test - my_open\n");
 	int minor = MINOR(inode->i_rdev);
 	//MOD_INC_USE_COUNT;
-	fileinfo *fileinfo_ptr = kmalloc(sizeof(fileinfo), GFP_KERNEL);
-	if (fileinfo_ptr == NULL) {
-		MOD_DEC_USE_COUNT;
-		printk(KERN_WARNING "can't get dynamic memory\n");
-		return -ENOMEM;
-	}
-	printk ("printk test1 - my_open\n");
-	fileinfo_ptr->read_ptr = 0;
-	fileinfo_ptr->write_ptr = 0;
-
-	printk ("printk test2 - my_open\n");
 	mydev *devptr;
+	printk ("opening dev file with minor %d\n",minor);
 	for (devptr = devlist_ptr; devptr; devptr = devptr->next){
+		printk ("comparing to current minor: %d\n", devptr->id);
 		if (devptr->id == minor){ //buffer already exeists for device file
-			fileinfo_ptr->data = devptr->data;
+			printk ("device exists with minot %d\n", devptr->id);
 			break;
 		}
 	}
 	
-	printk ("printk test3 - my_open\n");
 	if (devptr == NULL) { //buffer does not exist for device file, create new
-	printk ("printk test4 - my_open\n");
-		mydev *new_devptr = kmalloc(sizeof(mydev), GFP_KERNEL);
-	printk ("printk test5 - my_open\n");
-		if (new_devptr == NULL) {
-			MOD_DEC_USE_COUNT;
+		devptr = kmalloc(sizeof(mydev), GFP_KERNEL);
+		if (devptr == NULL) {
+			//MOD_DEC_USE_COUNT;
 			printk(KERN_WARNING "can't get dynamic memory\n");
-			kfree(fileinfo_ptr);
 			return -ENOMEM;
 		}
-	printk ("printk test6 - my_open\n");
-		new_devptr->id = minor;
-		new_devptr->data = kmalloc(MY_BLOCK_SIZE, GFP_KERNEL);
-		if (new_devptr->data == NULL) {
-			kfree(fileinfo_ptr);
-			kfree(new_devptr);
+		printk ("new dev with minor %d\n",minor);
+		devptr->id = minor;
+		devptr->data = kmalloc(MY_BLOCK_SIZE, GFP_KERNEL);
+		if (devptr->data == NULL) {
+			kfree(devptr);
 			printk(KERN_WARNING "can't get dynamic memory\n");
-			MOD_DEC_USE_COUNT;
+			//MOD_DEC_USE_COUNT;
 			return -ENOMEM;
 		}
-	printk ("printk test7 - my_open\n");
-		memset(new_devptr->data, 0, MY_BLOCK_SIZE);
-	printk ("printk test8 - my_open\n");
-		fileinfo_ptr->data = new_devptr->data;
-	printk ("printk test9 - my_open\n");
-		new_devptr->next = devlist_ptr;
-		devlist_ptr = new_devptr;
+		memset(devptr->data, 0, MY_BLOCK_SIZE);
+		devptr->read_ptr = 0;
+		devptr->write_ptr = 0;
+		devptr->next = devlist_ptr;
+		devlist_ptr = devptr;
 	}
-	printk ("printk test10 - my_open\n");
-	filp->private_data = fileinfo_ptr;
+	filp->private_data = devptr;
 	
-	printk ("printk test11 - my_open\n");
 	if (filp->f_mode & FMODE_READ)
     {
 	//
@@ -159,8 +136,7 @@ int my_open(struct inode *inode, struct file *filp)
 
 int my_release(struct inode *inode, struct file *filp)
 {
-	kfree(filp->private_data);
-	MOD_DEC_USE_COUNT;
+	//MOD_DEC_USE_COUNT;
 	if (filp->f_mode & FMODE_READ)
     {
 	//
@@ -181,52 +157,53 @@ int my_release(struct inode *inode, struct file *filp)
 
 ssize_t my_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 {
-	fileinfo *fileinfo_ptr = filp->private_data;
+	mydev *devptr = filp->private_data;
 	size_t actual_count;
-	if (fileinfo_ptr->read_ptr + count > fileinfo_ptr->write_ptr) {
-		actual_count = fileinfo_ptr->write_ptr - fileinfo_ptr->read_ptr;
+	if (devptr->read_ptr + count > devptr->write_ptr) {
+		printk ("trying to read too much data\n");
+		actual_count = devptr->write_ptr - devptr->read_ptr;
 	}
 	else{
 		actual_count = count;
 	}
-	if (copy_to_user(buf, fileinfo_ptr->data + fileinfo_ptr->read_ptr, actual_count)){
+	if (copy_to_user(buf, devptr->data + devptr->read_ptr, actual_count)){
 		return -EFAULT;
 	}
-	fileinfo_ptr->read_ptr += actual_count;
+	devptr->read_ptr += actual_count;
 	return actual_count;
 }
 
 
 ssize_t my_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
 {
-	fileinfo *fileinfo_ptr = filp->private_data;
-	printk ("fileinfo_ptr->write_ptr = %d", fileinfo_ptr->write_ptr);
-	if (fileinfo_ptr->write_ptr + count > MY_BLOCK_SIZE) {
+	mydev *devptr = filp->private_data;
+	printk ("devptr->write_ptr = %d\n", devptr->write_ptr);
+	if (devptr->write_ptr + count > MY_BLOCK_SIZE) {
 		printk(KERN_WARNING "not enough free memory in buffer\n");
 		return -ENOMEM;
 	}
-	if (copy_from_user(fileinfo_ptr->data + fileinfo_ptr->write_ptr, buf, count)){
+	if (copy_from_user(devptr->data + devptr->write_ptr, buf, count)){
 		return -EFAULT;
 	}
-	fileinfo_ptr->write_ptr += count;
-	printk ("fileinfo_ptr->write_ptr = %d", fileinfo_ptr->write_ptr);
+	devptr->write_ptr += count;
+	printk ("devptr->write_ptr = %d\n", devptr->write_ptr);
 	return count;
 }
 
 
 int my_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
-{
-	fileinfo *fileinfo_ptr = filp->private_data;
+{	
+	mydev *devptr = filp->private_data;
 	switch(cmd)
     {
 		case MY_RESET:
 			printk("MY_RESET\n");
-			fileinfo_ptr->read_ptr = 0;
-			fileinfo_ptr->write_ptr = 0;
+			devptr->read_ptr = 0;
+			devptr->write_ptr = 0;
 			break;
 		case MY_RESTART:
 			printk("MY_RESTART\n");
-			fileinfo_ptr->read_ptr = 0;
+			devptr->read_ptr = 0;
 			break;
 		default:
 			return -ENOTTY;
